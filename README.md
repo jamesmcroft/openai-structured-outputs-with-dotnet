@@ -1,24 +1,17 @@
-# Azure OpenAI GPT-4o Structured Outputs with .NET 9
+# Azure OpenAI GPT-4o Structured Outputs with .NET
 
-The goal of this sample is to demonstrate how to use the new `JsonSchemaExporter` type in .NET 9 to simplify the creation of JSON schemas for Azure OpenAI GPT-4o structured outputs.
+The goal of this sample is to demonstrate how to leverage the Azure OpenAI GPT-4o structured outputs feature by generating valid OpenAI JSON schemas for a given Type in .NET.
 
 ## How it works
 
-`JsonSchemaExporter` is simply a built in .NET mechanism to generate valid JSON schema objects from .NET types.
+> [!IMPORTANT]
+> The original vision was to leverage the `JsonSchemaExporter` in .NET 9 to generate JSON schemas. However, the generated schemas are not directly compatible with the OpenAI SDK. The current implementation is a workaround to generate valid schemas for structured outputs.
 
-For the .NET OpenAI SDK however, the JSON schema must be in a specific format to be considered valid. On top of the default generated schemas using the exporter, the current known additional rules must be applied:
+The [`OpenAIJsonSchema` class](./src/StructuredOutputs/OpenAIJsonSchema.cs) provides a mechanism to generate a valid OpenAI JSON schema for any given model Type. The class uses reflection to traverse the properties of the model Type and generate the schema based on the property types.
 
-- The base type must be an `object` only by setting the `TreatNullObliviousAsNonNullable = true` option in the `JsonSchemaExporterOptions`.
-- Any properties that are of type `object` must additionally include the following properties:
-  - `additionalProperties` set to `false`.
-  - `required` which is an array of **all** the keys in the object.
+The [`StructuredOutputsExtensions` class](./src/StructuredOutputs/StructuredOutputsExtensions.cs) provides a generic `CreateJsonSchemaFormat` method that can be passed a model object type and will return the `ChatResponseFormat` object that can be used by the OpenAI SDK. This method uses the `OpenAIJsonSchema.For` method to generate the schema for the model object type.
 
-The [`StructuredOutputsExtensions` class](./src/StructuredOutputs/StructuredOutputsExtensions.cs) provides a generic `CreateJsonSchemaFormat` method that can be passed a model object type and will return the `ChatResponseFormat` object that can be used by the OpenAI SDK. This method will apply the additional rules to the generated schema using a Transform function.
-
-> [!NOTE]
-> For complex object nesting where there are self-referencing types, this implementation does not support. It would be possible to provide this capability by simplifying the nested classes as `$defs` at the root of the schema, and then referencing them in the properties with `'$ref': '#/$defs/ClassName'`.
-
-In addition to the generic `CreateJsonSchemaFormat` method, a generic `CompleteChat` extension is provided for the `ChatClient` that will automatically deserialize the structured output into the expected model object type.
+In addition to the generic `CreateJsonSchemaFormat` method, a generic `CompleteChat` and `CompleteChatAsync` extension is provided for the `ChatClient` that will return a wrapped `ChatCompletion` object as [`ParsedChatCompletion`](./src/StructuredOutputs/ParsedChatCompletion.cs) that includes a `Parsed` property containing the deserialized model object.
 
 ### Example
 
@@ -49,7 +42,39 @@ List<ChatMessage> messages =
     new UserChatMessage("Create a family with 2 parents and 2 children.")
 ];
 
-var family = chatClient.CompleteChat<Family>(messages, options);
+ParsedChatCompletion<Family?> completion = chatClient.CompleteChat(messages, options);
+Family? family = completion.Parsed;
+```
+
+You can also provide descriptions for schema properties by using the `DescriptionAttribute`:
+
+```csharp
+class Person
+{
+    [Description("The name of the person.")]
+    public string Name { get; set; }
+
+    [Description("The age of the person.")]
+    public int Age { get; set; }
+}
+```
+
+These are included in the generated schema:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "Name": {
+      "type": "string",
+      "description": "The name of the person."
+    },
+    "Age": {
+      "type": "integer",
+      "description": "The age of the person."
+    }
+  }
+}
 ```
 
 ## Running the sample

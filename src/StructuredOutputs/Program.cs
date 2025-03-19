@@ -1,16 +1,17 @@
+using System.Text;
 using System.Text.Json;
-using StructuredOutputs.Models;
-using OpenAI.Chat;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using DotNetEnv;
+using OpenAI.Chat;
 using StructuredOutputs;
+using StructuredOutputs.Models;
 
 // Load the environment variables from the .env file
 Env.Load("./.env");
 
 // Set up the OpenAI client
-AzureOpenAIClient openAIClient = new(new Uri(Environment.GetEnvironmentVariable("OPENAI_ENDPOINT") ?? string.Empty), new DefaultAzureCredential(), new AzureOpenAIClientOptions(AzureOpenAIClientOptions.ServiceVersion.V2024_08_01_Preview));
+AzureOpenAIClient openAIClient = new(new Uri(Environment.GetEnvironmentVariable("OPENAI_ENDPOINT") ?? string.Empty), new DefaultAzureCredential());
 var chatClient = openAIClient.GetChatClient(Environment.GetEnvironmentVariable("GPT4O_MODEL_DEPLOYMENT_NAME"));
 
 // Construct the configuration for the chat including the structured outputs response JSON schema.
@@ -25,13 +26,23 @@ ChatCompletionOptions options = new()
 // Send a request to extract data using Structured Outputs
 var markdown = File.ReadAllText("Assets/Invoice-Markdown.md");
 
-List<ChatMessage> messages =
-[
-    new SystemChatMessage("You are an AI assistant that extracts data from documents."),
-    new UserChatMessage("Extract the data from this invoice. If a value is not present, provide null. Dates should be in the format YYYY-MM-DD."),
-    new UserChatMessage(markdown)
-];
+var systemPrompt = "You are an AI assistant that extracts data from documents.";
+var userContent = new List<ChatMessageContentPart>();
+var userTextPromptBuilder = new StringBuilder();
+userTextPromptBuilder.AppendLine("Extract the data from this invoice.");
+userTextPromptBuilder.AppendLine("- If a value is not present, provide null.");
+userTextPromptBuilder.AppendLine("- Dates should be in the format YYYY-MM-DD.");
 
-var invoice = chatClient.CompleteChat<Invoice>(messages, options);
+var userTextPrompt = userTextPromptBuilder.ToString();
 
-Console.WriteLine(JsonSerializer.Serialize(invoice, new JsonSerializerOptions { WriteIndented = true }));
+userContent.Add(ChatMessageContentPart.CreateTextPart(userTextPrompt));
+userContent.Add(ChatMessageContentPart.CreateTextPart(markdown));
+
+ParsedChatCompletion<Invoice?> completion = chatClient.CompleteChat(
+    [
+        new SystemChatMessage(systemPrompt),
+        new UserChatMessage(userContent)
+    ],
+    options);
+
+Console.WriteLine(JsonSerializer.Serialize(completion.Parsed, new JsonSerializerOptions { WriteIndented = true }));
